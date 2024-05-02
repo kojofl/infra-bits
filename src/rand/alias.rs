@@ -25,6 +25,7 @@ impl<const S: usize> Debug for Alias<S> {
     }
 }
 
+#[derive(Debug)]
 struct AliasBuilder<const S: usize> {
     small: StackVec<S>,
     big: StackVec<S>,
@@ -67,6 +68,9 @@ impl<const S: usize> AliasBuilder<S> {
                 });
             }
         }
+        while let Some((_, value)) = self.big.pop() {
+            containers[value] = MaybeUninit::new(Container { value, thresh: 1.0 });
+        }
         unsafe { mem::transmute_copy::<_, [Container; S]>(&containers) }
     }
 }
@@ -75,6 +79,7 @@ impl<const S: usize> Alias<S> {
     pub fn new(dist: &[f64; S]) -> Self {
         assert!(1.0 - dist.iter().sum::<f64>() < EPSILON);
         let builder = AliasBuilder::new(dist);
+        println!("{:?}", builder);
 
         Self {
             rng: Cell::new(thread_rng()),
@@ -96,6 +101,14 @@ impl<const S: usize> Alias<S> {
 pub struct StackVec<const S: usize> {
     inner: [MaybeUninit<(f64, usize)>; S],
     len: usize,
+}
+
+impl<const S: usize> Debug for StackVec<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let slice: &[(f64, usize)] =
+            unsafe { std::slice::from_raw_parts(self.inner[0].as_ptr(), self.len) };
+        f.debug_struct("StackVec").field("inner", &slice).finish()
+    }
 }
 
 impl<const S: usize> StackVec<S> {

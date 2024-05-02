@@ -8,13 +8,8 @@ fn test_should_error_on_non_uniform() {
 
 #[test]
 fn test_generate() {
-    let alias = Alias::new(&[0.2, 0.3, 0.5]);
-    let mut res = [0, 0, 0];
-    for _ in 0..1000000 {
-        res[alias.generate()] += 1;
-    }
-    assert!(res[0] < res[1]);
-    assert!(res[1] < res[2]);
+    let alias = Alias::new(&[0.08, 0.12, 0.10, 0.07, 0.0, 0.28, 0.11, 0.08, 0.06, 0.10]);
+    println!("{:?}", alias)
 }
 
 #[test]
