@@ -12,3 +12,4 @@ rand = ["dep:rand", "dep:smallvec"]
 [dependencies]
 rand = { version = "0.8.5", optional = true } 
 smallvec = { version = "1.13.1", optional = true }
+num-integer = "0.1" 

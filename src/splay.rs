@@ -1,12 +1,12 @@
-use rand::{rngs::ThreadRng, thread_rng, Rng};
 use std::{cmp::Ordering, fmt::Debug, ptr::NonNull};
 
-pub struct RTreeMap<K: PartialOrd, V> {
-    rng: ThreadRng,
+/// TODO: Actually implement the splay operation
+
+pub struct SplayTree<K: PartialOrd, V> {
     root: Link<K, V>,
 }
 
-impl<K: PartialOrd + Debug, V: Debug> Debug for RTreeMap<K, V> {
+impl<K: PartialOrd + Debug, V: Debug> Debug for SplayTree<K, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "{:?}",
@@ -15,24 +15,20 @@ impl<K: PartialOrd + Debug, V: Debug> Debug for RTreeMap<K, V> {
     }
 }
 
-impl<K: PartialOrd, V> RTreeMap<K, V> {
+impl<K: PartialOrd, V> SplayTree<K, V> {
     pub fn new() -> Self {
-        Self {
-            rng: thread_rng(),
-            root: None,
-        }
+        Self { root: None }
     }
 
     pub fn insert(&mut self, key: K, value: V) {
-        let priority = self.rng.gen();
         if let Some(root) = self.root.as_ref() {
-            unsafe { Node::insert(root.clone(), key, value, priority) };
+            unsafe { Node::insert(root.clone(), key, value) };
             // It might happen that we are no longer referencing the root node.
             if unsafe { self.root.unwrap().as_ref().parent.is_some() } {
                 self.root = unsafe { self.root.unwrap().as_ref().parent };
             }
         } else {
-            self.root = NonNull::new(Box::into_raw(Node::new(key, value, priority)));
+            self.root = NonNull::new(Box::into_raw(Node::new(key, value)));
         }
     }
 
@@ -42,16 +38,6 @@ impl<K: PartialOrd, V> RTreeMap<K, V> {
             // the tree.
             unsafe {
                 if root.as_mut().key == key {
-                    match root.as_ref().get_highest_prio_child() {
-                        Some(d) => match d {
-                            Direction::Left => root.as_mut().rotate_right(),
-                            Direction::Right => root.as_mut().rotate_left(),
-                        },
-                        None => {
-                            let h = Box::from_raw(root.as_ptr());
-                            return Some(h.value);
-                        }
-                    }
                     self.root = root.as_ref().parent;
                 } else {
                     // Since we took the root node we will have to put it back in case it is not
@@ -67,24 +53,12 @@ impl<K: PartialOrd, V> RTreeMap<K, V> {
 
     pub fn contains(&self, needle: K) -> bool {
         self.root
-            .map(|r| unsafe { r.as_ref().get(needle).is_some() })
+            .map(|r| unsafe { r.as_ref().contains(needle) })
             .unwrap_or(false)
-    }
-
-    pub fn get(&self, needle: K) -> Option<&V> {
-        self.root
-            .map(|r| unsafe { r.as_ref().get(needle) })
-            .unwrap_or_default()
-    }
-
-    pub fn get_mut(&self, needle: K) -> Option<&mut V> {
-        self.root
-            .map(|mut r| unsafe { r.as_mut().get_mut(needle) })
-            .unwrap_or_default()
     }
 }
 
-impl<K: PartialOrd, V> Drop for RTreeMap<K, V> {
+impl<K: PartialOrd, V> Drop for SplayTree<K, V> {
     fn drop(&mut self) {
         if let Some(root) = self.root {
             let root = unsafe { Box::from_raw(root.as_ptr()) };
@@ -100,14 +74,8 @@ pub struct Node<K: PartialOrd, V> {
     parent: Parant<K, V>,
     key: K,
     value: V,
-    priority: usize,
     left: Link<K, V>,
     right: Link<K, V>,
-}
-
-enum Direction {
-    Left,
-    Right,
 }
 
 impl<K: PartialOrd + Debug, V: Debug> Debug for Node<K, V> {
@@ -115,7 +83,6 @@ impl<K: PartialOrd + Debug, V: Debug> Debug for Node<K, V> {
         f.debug_struct("Node")
             .field("key", &self.key)
             .field("value", &self.value)
-            .field("priority", &self.priority)
             .field("left", &self.left.map(|l| unsafe { l.as_ref() }))
             .field("right", &self.right.map(|r| unsafe { r.as_ref() }))
             .field("has_parent", &self.parent.is_some())
@@ -124,30 +91,14 @@ impl<K: PartialOrd + Debug, V: Debug> Debug for Node<K, V> {
 }
 
 impl<K: PartialOrd, V> Node<K, V> {
-    fn new(key: K, value: V, priority: usize) -> Box<Self> {
+    fn new(key: K, value: V) -> Box<Self> {
         Box::new(Self {
             parent: None,
             key,
             value,
-            priority,
             left: None,
             right: None,
         })
-    }
-
-    fn get_highest_prio_child(&self) -> Option<Direction> {
-        match (self.left, self.right) {
-            (None, None) => None,
-            (None, Some(_)) => Some(Direction::Right),
-            (Some(_), None) => Some(Direction::Left),
-            (Some(l), Some(r)) => unsafe {
-                if l.as_ref().priority >= r.as_ref().priority {
-                    Some(Direction::Left)
-                } else {
-                    Some(Direction::Right)
-                }
-            },
-        }
     }
 
     fn drop_children(mut self) {
@@ -161,83 +112,31 @@ impl<K: PartialOrd, V> Node<K, V> {
         }
     }
 
-    fn get(&self, needle: K) -> Option<&V> {
+    fn contains(&self, needle: K) -> bool {
         match self.key.partial_cmp(&needle) {
             Some(r) => match r {
                 Ordering::Greater => self
                     .left
-                    .map(|l| unsafe { l.as_ref().get(needle) })
-                    .unwrap_or_default(),
-                Ordering::Equal => Some(&self.value),
+                    .map(|l| unsafe { l.as_ref().contains(needle) })
+                    .unwrap_or(false),
+                Ordering::Equal => true,
                 Ordering::Less => self
                     .right
-                    .map(|r| unsafe { r.as_ref().get(needle) })
-                    .unwrap_or_default(),
+                    .map(|r| unsafe { r.as_ref().contains(needle) })
+                    .unwrap_or(false),
             },
             None => panic!("Failed to compare values"),
         }
     }
 
-    fn get_mut(&mut self, needle: K) -> Option<&mut V> {
-        match self.key.partial_cmp(&needle) {
-            Some(r) => match r {
-                Ordering::Greater => self
-                    .left
-                    .map(|mut l| unsafe { l.as_mut().get_mut(needle) })
-                    .unwrap_or_default(),
-                Ordering::Equal => Some(&mut self.value),
-                Ordering::Less => self
-                    .right
-                    .map(|mut r| unsafe { r.as_mut().get_mut(needle) })
-                    .unwrap_or_default(),
-            },
-            None => panic!("Failed to compare values"),
-        }
-    }
-    fn new_with_parent(key: K, value: V, priority: usize, parent: Parant<K, V>) -> Box<Self> {
+    fn new_with_parent(key: K, value: V, parent: Parant<K, V>) -> Box<Self> {
         Box::new(Self {
             parent,
             key,
             value,
-            priority,
             left: None,
             right: None,
         })
-    }
-
-    /// After a new insertion it is likely for the max heap structure of the tree to be gone
-    /// so this function fixes it from the bottom up by rotating accordingly so we do not
-    /// destroy the in order attribute of our search tree.
-    unsafe fn fix(parent: Parant<K, V>) {
-        if let Some(parent) = parent.map(|mut p| p.as_mut()) {
-            if parent
-                .left
-                .map(|l| l.as_ref().priority > parent.priority)
-                .unwrap_or(false)
-            {
-                parent.rotate_right();
-                Self::fix(
-                    parent
-                        .parent
-                        .expect("parent after rotation")
-                        .as_ref()
-                        .parent,
-                )
-            } else if parent
-                .right
-                .map(|r| r.as_ref().priority > parent.priority)
-                .unwrap_or(false)
-            {
-                parent.rotate_left();
-                Self::fix(
-                    parent
-                        .parent
-                        .expect("parent after rotation")
-                        .as_ref()
-                        .parent,
-                )
-            }
-        }
     }
 
     unsafe fn rotate_right(&mut self) {
@@ -280,28 +179,26 @@ impl<K: PartialOrd, V> Node<K, V> {
         new_parent.as_mut().left = NonNull::new(self as *mut Self);
     }
 
-    unsafe fn insert(mut dst: NonNull<Node<K, V>>, key: K, mut value: V, priority: usize) {
+    unsafe fn insert(mut dst: NonNull<Node<K, V>>, key: K, mut value: V) {
         let target = dst.as_mut();
         match target.key.partial_cmp(&key) {
             Some(Ordering::Equal) => std::mem::swap(&mut target.value, &mut value),
             Some(Ordering::Greater) => match target.left.as_ref() {
                 Some(l) => {
-                    Self::insert(*l, key, value, priority);
+                    Self::insert(*l, key, value);
                 }
                 None => {
-                    let new_element = Node::new_with_parent(key, value, priority, Some(dst));
+                    let new_element = Node::new_with_parent(key, value, Some(dst));
                     target.left = NonNull::new(Box::into_raw(new_element));
-                    Self::fix(Some(dst));
                 }
             },
             Some(Ordering::Less) => match target.right.as_ref() {
                 Some(r) => {
-                    Self::insert(*r, key, value, priority);
+                    Self::insert(*r, key, value);
                 }
                 None => {
-                    let new_element = Node::new_with_parent(key, value, priority, Some(dst));
+                    let new_element = Node::new_with_parent(key, value, Some(dst));
                     target.right = NonNull::new(Box::into_raw(new_element));
-                    Self::fix(Some(dst));
                 }
             },
             None => panic!("Failed to compare"),
@@ -331,12 +228,6 @@ impl<K: PartialOrd, V> Node<K, V> {
                     }
                 }
                 Ordering::Equal => {}
-            }
-        }
-        while let Some(d) = node.as_ref().get_highest_prio_child() {
-            match d {
-                Direction::Left => node.as_mut().rotate_right(),
-                Direction::Right => node.as_mut().rotate_left(),
             }
         }
         let mut parent = node.as_ref().parent.unwrap();
